@@ -1,0 +1,117 @@
+- name: Desinstalar o Monitor Telegram
+  hosts: windows_hosts
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    agent_directory: 'C:\Monitoramento'
+    agent_task: MonitorTelegram
+  tasks:
+    - name: Testar o acesso ao Windows
+      ansible.windows.win_ping:
+
+    - name: Remover a tarefa, os processos e os arquivos do agente
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          Directory: '{{ agent_directory }}'
+          TaskName: '{{ agent_task }}'
+        script: |
+          param([string]$Directory, [string]$TaskName)
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+
+          # A exclusão recursiva é permitida somente no diretório dedicado padrão.
+          if (-not [IO.Path]::IsPathRooted($Directory)) {
+              throw 'O diretório de instalação deve ser absoluto.'
+          }
+          $target = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+          if ($target -ne 'C:\Monitoramento') {
+              throw 'Por segurança, este playbook remove somente C:\Monitoramento.'
+          }
+          if ($TaskName -ne 'MonitorTelegram') {
+              throw 'Por segurança, este playbook remove somente a tarefa MonitorTelegram.'
+          }
+          $executable = Join-Path $target 'monitor-telegram.exe'
+
+          # Não siga junctions ou links que possam apontar para fora da instalação.
+          if (Test-Path -LiteralPath $target) {
+              $directoryItem = Get-Item -LiteralPath $target -Force
+              if (-not $directoryItem.PSIsContainer) {
+                  throw 'O caminho da instalação não é um diretório.'
+              }
+              $pending = New-Object 'System.Collections.Generic.Queue[string]'
+              $pending.Enqueue($target)
+              while ($pending.Count -gt 0) {
+                  $path = $pending.Dequeue()
+                  $item = Get-Item -LiteralPath $path -Force
+                  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                      throw "Link ou junction encontrado: $path. A exclusão foi bloqueada."
+                  }
+                  if ($item.PSIsContainer) {
+                      foreach ($child in Get-ChildItem -LiteralPath $path -Force) {
+                          $pending.Enqueue($child.FullName)
+                      }
+                  }
+              }
+          }
+
+          $task = Get-ScheduledTask | Where-Object {
+              $_.TaskName -eq $TaskName -and $_.TaskPath -eq '\'
+          }
+          if ($task) {
+              if (@($task.Actions).Count -ne 1 -or
+                  [IO.Path]::GetFullPath($task.Actions[0].Execute) -ne $executable) {
+                  throw 'A tarefa existente não corresponde ao executável desta instalação.'
+              }
+              Disable-ScheduledTask -InputObject $task | Out-Null
+              $Ansible.Changed = $true
+              if ($task.State -eq 'Running') {
+                  Stop-ScheduledTask -InputObject $task
+                  $deadline = (Get-Date).AddSeconds(30)
+                  do {
+                      Start-Sleep -Milliseconds 500
+                      $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
+                  } while ($task.State -eq 'Running' -and (Get-Date) -lt $deadline)
+                  if ($task.State -eq 'Running') {
+                      throw 'A tarefa não encerrou em 30 segundos; nenhum arquivo foi apagado.'
+                  }
+              }
+              Unregister-ScheduledTask -TaskName $TaskName -TaskPath '\' -Confirm:$false
+          }
+
+          # Também encerra instâncias manuais, identificadas pelo caminho completo.
+          function Get-AgentProcess {
+              foreach ($process in Get-CimInstance -ClassName Win32_Process -Filter "Name = 'monitor-telegram.exe'") {
+                  if ([string]::IsNullOrWhiteSpace($process.ExecutablePath)) {
+                      throw 'Não foi possível identificar o caminho de um processo do agente. Execute com acesso administrativo.'
+                  }
+                  if ($process.ExecutablePath -eq $executable) { $process }
+              }
+          }
+          foreach ($process in @(Get-AgentProcess)) {
+              $result = Invoke-CimMethod -InputObject $process -MethodName Terminate
+              if ($result.ReturnValue -ne 0) {
+                  throw "Não foi possível encerrar o processo $($process.ProcessId). Código: $($result.ReturnValue)"
+              }
+              $Ansible.Changed = $true
+          }
+          $deadline = (Get-Date).AddSeconds(30)
+          while (@(Get-AgentProcess).Count -gt 0) {
+              if ((Get-Date) -ge $deadline) {
+                  throw 'Ainda existem processos do agente; nenhum arquivo foi apagado.'
+              }
+              Start-Sleep -Milliseconds 500
+          }
+
+          if (Test-Path -LiteralPath $target) {
+              Remove-Item -LiteralPath $target -Recurse -Force
+              $Ansible.Changed = $true
+          }
+
+          if (Test-Path -LiteralPath $target) { throw 'A pasta de instalação ainda existe.' }
+          if (Get-ScheduledTask | Where-Object { $_.TaskName -eq $TaskName -and $_.TaskPath -eq '\' }) {
+              throw 'A tarefa agendada ainda existe.'
+          }
+          if (@(Get-AgentProcess).Count -gt 0) { throw 'Ainda existe um processo do agente.' }
+          $Ansible.Result = 'Desinstalação verificada: sem tarefa, processos ou pasta de instalação.'

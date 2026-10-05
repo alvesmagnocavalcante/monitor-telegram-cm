@@ -114,3 +114,19 @@ C:\Monitoramento\monitor-telegram.exe -env C:\Monitoramento\.env -once -dry-run
 ```
 
 Os arquivos foram preparados localmente. A execução do playbook, a autenticação WinRM e a instalação via Semaphore precisam ser validadas no runner e em uma máquina de destino.
+
+## 6. Desinstalar pelo Semaphore
+
+Publique também `docs/ansible/uninstall.yml` no mesmo repositório. Crie um template **Ansible Playbook** por hotel, como `Desinstalar agente - Taiba`, usando o inventário existente e o grupo de variáveis que já fornece as credenciais Windows. No campo do playbook, informe:
+
+```text
+docs/ansible/uninstall.yml
+```
+
+Não é necessário token do Telegram, `agent_topic` ou executável no runner para desinstalar. Conecte a VPN do hotel no ambiente do runner e execute primeiro em uma máquina com **Limit**; depois remova o Limit para o inventário inteiro. Aguarde a conclusão antes de trocar de VPN. A conta de acesso precisa de privilégios administrativos.
+
+O playbook desabilita e para `MonitorTelegram`, remove essa tarefa, encerra instâncias manuais cujo executável esteja em `C:\Monitoramento\monitor-telegram.exe` e apaga toda a pasta `C:\Monitoramento`, incluindo `.env`, executável e demais arquivos dentro dela. A pasta deve ser exclusiva do agente. Ele verifica a ausência da tarefa, dos processos e da pasta ao terminar. Executar novamente em uma máquina já desinstalada não altera nada.
+
+Por segurança, a exclusão é limitada ao caminho padrão `C:\Monitoramento`; caminhos diferentes, links/junctions e tarefas com ações inesperadas bloqueiam a operação. Instalações personalizadas em outro caminho exigem adaptar e revisar essa validação antes de executar.
+
+As mensagens já enviadas ao Telegram, o histórico do Semaphore e os registros de auditoria do Windows permanecem. Eles não são componentes da instalação e não são apagados pelo playbook. A desinstalação remota ainda precisa ser validada no seu ambiente.
