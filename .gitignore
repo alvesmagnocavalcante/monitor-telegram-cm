@@ -1,0 +1,4 @@
+.go/
+.env
+*.exe
+bin/

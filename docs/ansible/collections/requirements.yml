@@ -1,0 +1,5 @@
+collections:
+  - name: ansible.windows
+    version: '>=3.0.0,<4.0.0'
+  - name: community.windows
+    version: '>=3.0.0,<4.0.0'

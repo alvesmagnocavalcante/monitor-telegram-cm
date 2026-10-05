@@ -1,0 +1,183 @@
+- name: Instalar ou atualizar o Monitor Telegram
+  hosts: windows_hosts
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    agent_directory: 'C:\Monitoramento'
+    agent_task: MonitorTelegram
+    agent_binary_src: '{{ playbook_dir }}/../../bin/monitor-telegram.exe'
+    agent_cpu_limit: 90
+    agent_ram_limit: 90
+    agent_disk_limit: 90
+    agent_interval: 30s
+    agent_disk_path: 'C:\'
+    telegram_chat_id: '-1004428450910'
+    telegram_topics:
+      Taiba: 26
+      Charme: 27
+      Magna: 29
+      Acaraizinho: 30
+      Wind: 28
+    telegram_bot_token: "{{ lookup('ansible.builtin.env', 'TELEGRAM_BOT_TOKEN') }}"
+  tasks:
+    - name: Validar segredos sem exibir seus valores
+      ansible.builtin.assert:
+        that:
+          - telegram_bot_token is match('^[0-9]+:[A-Za-z0-9_-]+$')
+          - ansible_password | default('') | length > 0
+        fail_msg: Configure TELEGRAM_BOT_TOKEN e o segredo usado por ansible_password no Semaphore.
+      no_log: true
+
+    - name: Validar o hotel selecionado no template
+      ansible.builtin.assert:
+        that:
+          - agent_topic | default('') in telegram_topics
+        fail_msg: Nas Extra Variables do template, defina agent_topic como Taiba, Charme, Magna, Acaraizinho ou Wind.
+
+    - name: Verificar se o executável está disponível no runner
+      ansible.builtin.stat:
+        path: '{{ agent_binary_src }}'
+      delegate_to: localhost
+      register: agent_binary
+
+    - name: Exigir o artefato compilado
+      ansible.builtin.assert:
+        that:
+          - agent_binary.stat.isreg | default(false)
+        fail_msg: Disponibilize bin/monitor-telegram.exe no repositório de implantação ou ajuste agent_binary_src.
+
+    - name: Testar o acesso ao Windows
+      ansible.windows.win_ping:
+
+    - name: Exigir arquitetura compatível com o executável amd64
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+              throw 'Este playbook exige Windows x64 e executável compilado para amd64.'
+          }
+
+    - name: Criar a pasta de instalação
+      ansible.windows.win_file:
+        path: '{{ agent_directory }}'
+        state: directory
+
+    - name: Restringir a pasta a administradores, SYSTEM e LocalService
+      ansible.windows.win_powershell:
+        parameters:
+          Directory: '{{ agent_directory }}'
+        script: |
+          param([string]$Directory)
+          $ErrorActionPreference = 'Stop'
+          $current = Get-Acl -LiteralPath $Directory
+          $acl = New-Object System.Security.AccessControl.DirectorySecurity
+          $acl.SetAccessRuleProtection($true, $false)
+          foreach ($entry in @(
+              @{ Sid = 'S-1-5-32-544'; Rights = 'FullControl' },
+              @{ Sid = 'S-1-5-18'; Rights = 'FullControl' },
+              @{ Sid = 'S-1-5-19'; Rights = 'ReadAndExecute' }
+          )) {
+              $sid = New-Object System.Security.Principal.SecurityIdentifier($entry.Sid)
+              $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                  $sid, $entry.Rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+              $acl.AddAccessRule($rule)
+          }
+          $section = [System.Security.AccessControl.AccessControlSections]::Access
+          $Ansible.Changed = $current.GetSecurityDescriptorSddlForm($section) -ne $acl.GetSecurityDescriptorSddlForm($section)
+          if ($Ansible.Changed) { Set-Acl -LiteralPath $Directory -AclObject $acl }
+
+    - name: Parar a tarefa existente antes de substituir arquivos
+      ansible.windows.win_powershell:
+        parameters:
+          TaskName: '{{ agent_task }}'
+        script: |
+          param([string]$TaskName)
+          $ErrorActionPreference = 'Stop'
+          $task = Get-ScheduledTask | Where-Object { $_.TaskName -eq $TaskName -and $_.TaskPath -eq '\' }
+          $Ansible.Changed = $false
+          if ($task -and $task.State -eq 'Running') {
+              Stop-ScheduledTask -InputObject $task
+              $deadline = (Get-Date).AddSeconds(30)
+              do {
+                  Start-Sleep -Milliseconds 500
+                  $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
+              } while ($task.State -eq 'Running' -and (Get-Date) -lt $deadline)
+              if ($task.State -eq 'Running') { throw 'A tarefa não encerrou em 30 segundos.' }
+              $Ansible.Changed = $true
+          }
+
+    - name: Copiar o executável
+      ansible.windows.win_copy:
+        src: '{{ agent_binary_src }}'
+        dest: '{{ agent_directory }}\monitor-telegram.exe'
+
+    - name: Gerar a configuração por computador
+      ansible.windows.win_copy:
+        dest: '{{ agent_directory }}\.env'
+        content: |
+          TELEGRAM_BOT_TOKEN={{ telegram_bot_token }}
+          TELEGRAM_CHAT_ID={{ telegram_chat_id }}
+          TELEGRAM_TOPIC={{ agent_topic }}
+          TELEGRAM_TOPIC_TAIBA_ID={{ telegram_topics.Taiba }}
+          TELEGRAM_TOPIC_CHARME_ID={{ telegram_topics.Charme }}
+          TELEGRAM_TOPIC_MAGNA_ID={{ telegram_topics.Magna }}
+          TELEGRAM_TOPIC_ACARAIZINHO_ID={{ telegram_topics.Acaraizinho }}
+          TELEGRAM_TOPIC_WIND_ID={{ telegram_topics.Wind }}
+          CPU_LIMIT={{ agent_cpu_limit }}
+          RAM_LIMIT={{ agent_ram_limit }}
+          DISK_LIMIT={{ agent_disk_limit }}
+          MONITOR_INTERVAL={{ agent_interval }}
+          DISK_PATH={{ agent_disk_path }}
+      no_log: true
+      diff: false
+
+    - name: Validar a configuração e executar uma coleta sem enviar mensagens
+      ansible.windows.win_command:
+        argv:
+          - '{{ agent_directory }}\monitor-telegram.exe'
+          - -env
+          - '{{ agent_directory }}\.env'
+          - -once
+          - -dry-run
+      changed_when: false
+
+    - name: Configurar a inicialização automática
+      community.windows.win_scheduled_task:
+        name: '{{ agent_task }}'
+        path: '\'
+        description: Monitoramento de CPU, RAM, disco e uptime com alertas no Telegram.
+        actions:
+          - path: '{{ agent_directory }}\monitor-telegram.exe'
+            arguments: '-env "{{ agent_directory }}\.env"'
+            working_directory: '{{ agent_directory }}'
+        triggers:
+          - type: boot
+        username: S-1-5-19
+        logon_type: service_account
+        run_level: limited
+        execution_time_limit: PT0S
+        multiple_instances: 2
+        restart_count: 3
+        restart_interval: PT1M
+        start_when_available: true
+        disallow_start_if_on_batteries: false
+        stop_if_going_on_batteries: false
+        enabled: true
+        state: present
+
+    - name: Iniciar o agente e confirmar que permanece em execução
+      ansible.windows.win_powershell:
+        parameters:
+          TaskName: '{{ agent_task }}'
+        script: |
+          param([string]$TaskName)
+          $ErrorActionPreference = 'Stop'
+          Start-ScheduledTask -TaskName $TaskName -TaskPath '\'
+          Start-Sleep -Seconds 5
+          $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
+          if ($task.State -ne 'Running') {
+              $info = Get-ScheduledTaskInfo -TaskName $TaskName -TaskPath '\'
+              throw "O agente encerrou. Resultado da tarefa: $($info.LastTaskResult)"
+          }
+          $Ansible.Changed = $true
