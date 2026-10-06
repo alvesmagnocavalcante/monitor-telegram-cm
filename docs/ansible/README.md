@@ -84,6 +84,8 @@ Documentação: [Inventários](https://semaphoreui.com/docs/user-guide/inventory
 
 Para cada host, um de cada vez, o playbook:
 
+Antes das demais tarefas, testa WinRM. Se o resultado for `UNREACHABLE`, informa o host pulado, encerra somente sua execução e continua no próximo computador. Isso cobre máquinas offline e outras falhas de conexão, inclusive erros de autenticação classificados como `UNREACHABLE`: consulte a causa no log. O computador pulado não recebe instalação ou atualização nesta execução; execute novamente quando estiver acessível.
+
 1. Valida os segredos, o tópico e a presença do executável no runner.
 2. Confirma conexão e arquitetura x64.
 3. Cria `C:\Monitoramento`, permitindo acesso somente a Administradores, SYSTEM e LocalService. LocalService recebe leitura e execução.
@@ -103,7 +105,7 @@ Encerre instâncias iniciadas manualmente antes da implantação. O playbook ger
 
 Para mudar código, recompile, publique o novo executável no repositório de implantação e execute o mesmo template. Para mudar limites, altere as variáveis e execute novamente. Limites individuais podem ser definidos diretamente em cada host do inventário, por exemplo `agent_ram_limit: 80`, desde que não sejam sobrescritos nas Extra Variables (que têm maior precedência).
 
-Cada execução reinicia o agente, mesmo sem alteração de arquivos. Isso reinicia o estado dos alertas e pode emitir um novo alerta para um problema ainda ativo. O playbook interrompe a distribuição na primeira falha. Se falhar depois de parar a tarefa, o computador pode ficar sem monitoramento até corrigir e executar novamente; não há rollback automático.
+Cada execução reinicia o agente, mesmo sem alteração de arquivos. Isso reinicia o estado dos alertas e pode emitir um novo alerta para um problema ainda ativo. Máquinas inacessíveis no teste inicial são puladas; outros erros continuam interrompendo a distribuição. Se falhar depois de parar a tarefa, o computador pode ficar sem monitoramento até corrigir e executar novamente; não há rollback automático.
 
 No Windows, consulte:
 
@@ -124,6 +126,8 @@ docs/ansible/uninstall.yml
 ```
 
 Não é necessário token do Telegram, `agent_topic` ou executável no runner para desinstalar. Conecte a VPN do hotel no ambiente do runner e execute primeiro em uma máquina com **Limit**; depois remova o Limit para o inventário inteiro. Aguarde a conclusão antes de trocar de VPN. A conta de acesso precisa de privilégios administrativos.
+
+A desinstalação também pula hosts com `UNREACHABLE` no teste inicial e continua nos demais. Nesses computadores, a remoção permanece pendente e o agente instalado continua presente. Execute novamente quando estiverem acessíveis.
 
 O playbook desabilita e para `MonitorTelegram`, remove essa tarefa, encerra instâncias manuais cujo executável esteja em `C:\Monitoramento\monitor-telegram.exe` e apaga toda a pasta `C:\Monitoramento`, incluindo `.env`, executável e demais arquivos dentro dela. A pasta deve ser exclusiva do agente. Ele verifica a ausência da tarefa, dos processos e da pasta ao terminar. Executar novamente em uma máquina já desinstalada não altera nada.
 

@@ -21,6 +21,20 @@
       Wind: 28
     telegram_bot_token: "{{ lookup('ansible.builtin.env', 'TELEGRAM_BOT_TOKEN') }}"
   tasks:
+    - name: Testar o acesso ao Windows
+      ansible.windows.win_ping:
+      register: agent_connection
+      ignore_unreachable: true
+
+    - name: Informar computador inacessível
+      ansible.builtin.debug:
+        msg: '{{ inventory_hostname }} está inacessível e será pulado nesta execução. Tente novamente quando estiver acessível.'
+      when: agent_connection is unreachable
+
+    - name: Encerrar somente a execução do computador inacessível
+      ansible.builtin.meta: end_host
+      when: agent_connection is unreachable
+
     - name: Validar segredos sem exibir seus valores
       ansible.builtin.assert:
         that:
@@ -47,9 +61,6 @@
         that:
           - agent_binary.stat.isreg | default(false)
         fail_msg: Disponibilize bin/monitor-telegram.exe no repositório de implantação ou ajuste agent_binary_src.
-
-    - name: Testar o acesso ao Windows
-      ansible.windows.win_ping:
 
     - name: Exigir arquitetura compatível com o executável amd64
       ansible.windows.win_powershell:

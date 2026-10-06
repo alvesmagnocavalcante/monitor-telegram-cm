@@ -9,6 +9,17 @@
   tasks:
     - name: Testar o acesso ao Windows
       ansible.windows.win_ping:
+      register: agent_connection
+      ignore_unreachable: true
+
+    - name: Informar computador inacessível
+      ansible.builtin.debug:
+        msg: '{{ inventory_hostname }} está inacessível e será pulado nesta execução. A desinstalação permanece pendente.'
+      when: agent_connection is unreachable
+
+    - name: Encerrar somente a execução do computador inacessível
+      ansible.builtin.meta: end_host
+      when: agent_connection is unreachable
 
     - name: Remover a tarefa, os processos e os arquivos do agente
       ansible.windows.win_powershell:
