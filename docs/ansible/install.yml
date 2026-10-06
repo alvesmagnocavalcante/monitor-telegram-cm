@@ -25,7 +25,8 @@
       ansible.builtin.assert:
         that:
           - telegram_bot_token is match('^[0-9]+:[A-Za-z0-9_-]+$')
-          - ansible_password | default('') | length > 0
+          - ansible_password is defined and ansible_password is not none
+          - ansible_password | default('') | string | length > 0
         fail_msg: Configure TELEGRAM_BOT_TOKEN e o segredo usado por ansible_password no Semaphore.
       no_log: true
 
