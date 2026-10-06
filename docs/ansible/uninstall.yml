@@ -2,7 +2,7 @@
   hosts: windows_hosts
   gather_facts: false
   serial: 1
-  any_errors_fatal: true
+  any_errors_fatal: false
   vars:
     agent_directory: 'C:\Monitoramento'
     agent_task: MonitorTelegram

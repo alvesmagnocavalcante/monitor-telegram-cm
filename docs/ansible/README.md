@@ -105,7 +105,7 @@ Encerre instâncias iniciadas manualmente antes da implantação. O playbook ger
 
 Para mudar código, recompile, publique o novo executável no repositório de implantação e execute o mesmo template. Para mudar limites, altere as variáveis e execute novamente. Limites individuais podem ser definidos diretamente em cada host do inventário, por exemplo `agent_ram_limit: 80`, desde que não sejam sobrescritos nas Extra Variables (que têm maior precedência).
 
-Cada execução reinicia o agente, mesmo sem alteração de arquivos. Isso reinicia o estado dos alertas e pode emitir um novo alerta para um problema ainda ativo. Máquinas inacessíveis no teste inicial são puladas; outros erros continuam interrompendo a distribuição. Se falhar depois de parar a tarefa, o computador pode ficar sem monitoramento até corrigir e executar novamente; não há rollback automático.
+Cada execução reinicia o agente, mesmo sem alteração de arquivos. Isso reinicia o estado dos alertas e pode emitir um novo alerta para um problema ainda ativo. Máquinas inacessíveis no teste inicial são puladas. `any_errors_fatal: false` permite continuar nos demais hosts; erros reais de instalação ou remoção continuam marcando o computador como falho e a execução como malsucedida. Se falhar depois de parar a tarefa, o computador pode ficar sem monitoramento até corrigir e executar novamente; não há rollback automático.
 
 No Windows, consulte:
 
